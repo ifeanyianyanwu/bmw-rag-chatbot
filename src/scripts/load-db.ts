@@ -1,6 +1,5 @@
 import { DataAPIClient } from "@datastax/astra-db-ts";
 import { PuppeteerWebBaseLoader } from "langchain/document_loaders/web/puppeteer";
-import { OpenAI } from "openai";
 import { GoogleGenAI } from "@google/genai";
 import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import "dotenv/config";
@@ -12,12 +11,11 @@ const {
   ASTRA_DB_COLLECTION,
   ASTRA_DB_APPLICATION_TOKEN,
   ASTRA_DB_API_ENDPOINT,
-  OPENAI_API_KEY,
   GOOGLE_GENAI_API_KEY,
+  PUPPETEER_EXECUTABLE_PATH,
 } = process.env;
 
 const ai = new GoogleGenAI({ apiKey: GOOGLE_GENAI_API_KEY });
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 const bmwData = [
   "https://www.bmw.com/en/index.html",
@@ -37,7 +35,7 @@ const splitter = new RecursiveCharacterTextSplitter({
 const createCollection = async (
   similarityMetric: SimilarityMetric = "dot_product"
 ) => {
-  const res = await db.createCollection(ASTRA_DB_COLLECTION, {
+  await db.createCollection(ASTRA_DB_COLLECTION, {
     vector: { dimension: 768, metric: similarityMetric },
   });
 };
@@ -54,7 +52,7 @@ const loadSampleData = async () => {
         config: { outputDimensionality: 768 },
       });
 
-      const vector = embedding.embeddings;
+      const vector = embedding.embeddings[0].values;
 
       const res = collection.insertOne({ $vector: vector, text: chunk });
       console.log(res);
@@ -62,6 +60,22 @@ const loadSampleData = async () => {
   }
 };
 
-const scrapePage = (url: string) => {
-  return "";
+const scrapePage = async (url: string) => {
+  const loader = new PuppeteerWebBaseLoader(url, {
+    launchOptions: {
+      headless: true,
+      executablePath: PUPPETEER_EXECUTABLE_PATH,
+    },
+    gotoOptions: { waitUntil: "domcontentloaded" },
+    evaluate: async (page, browser) => {
+      const result = await page.evaluate(() => document.body.innerHTML);
+      await browser.close();
+      return result;
+    },
+  });
+  return (await loader.scrape())?.replace(/<[^>]*>?/gm, "");
 };
+
+createCollection().then(() => {
+  loadSampleData();
+});
